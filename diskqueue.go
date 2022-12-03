@@ -81,7 +81,7 @@ type diskQueue struct {
 	exitFlag            int32
 	needSync            bool
 
-	maxDepth int64
+	maxDepth int64 // max depth of the queue, 0 means no limit
 	fullFlag int32 // 0 = not full, 1 = full, using int32 for atomic access
 
 	// keeps track of the position where we have read
@@ -285,7 +285,7 @@ func (d *diskQueue) skipToNextRWFile() error {
 	d.readPos = 0
 	d.nextReadFileNum = d.writeFileNum
 	d.nextReadPos = 0
-	if d.maxDepth != 0 && d.depth >= d.maxDepth {
+	if d.maxDepth > 0 && d.depth >= d.maxDepth {
 		// if we are full, we need to reset the full flag,
 		//but we don't want to test it direct, as that would require atomic access
 		atomic.StoreInt32(&d.fullFlag, 0)
@@ -450,7 +450,7 @@ func (d *diskQueue) writeOne(data []byte) error {
 
 	d.writePos += totalBytes
 	d.depth += 1
-	if d.maxDepth != 0 && d.depth >= d.maxDepth {
+	if d.maxDepth > 0 && d.depth >= d.maxDepth {
 		// set full flag if needed
 		atomic.StoreInt32(&d.fullFlag, 1)
 	}
@@ -498,7 +498,7 @@ func (d *diskQueue) retrieveMetaData() error {
 		return err
 	}
 	d.depth = depth
-	if d.maxDepth != 0 && d.depth >= d.maxDepth {
+	if d.maxDepth > 0 && d.depth >= d.maxDepth {
 		// set full flag if needed
 		atomic.StoreInt32(&d.fullFlag, 1)
 	}
@@ -586,7 +586,7 @@ func (d *diskQueue) checkTailCorruption(depth int64) {
 				d.name, depth)
 		}
 		// force set depth 0
-		if d.maxDepth != 0 && d.depth >= d.maxDepth {
+		if d.maxDepth > 0 && d.depth >= d.maxDepth {
 			// if we are full, we need to reset the full flag,
 			//but we don't want to test it direct, as that would require atomic access
 			atomic.StoreInt32(&d.fullFlag, 0)
@@ -617,7 +617,7 @@ func (d *diskQueue) moveForward() {
 	oldReadFileNum := d.readFileNum
 	d.readFileNum = d.nextReadFileNum
 	d.readPos = d.nextReadPos
-	if d.maxDepth != 0 && d.depth >= d.maxDepth {
+	if d.maxDepth > 0 && d.depth >= d.maxDepth {
 		// if we are full, we need to reset the full flag,
 		//but we don't want to test it direct, as that would require atomic access
 		atomic.StoreInt32(&d.fullFlag, 0)
