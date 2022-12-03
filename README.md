@@ -5,3 +5,5 @@
 A Go package providing a filesystem-backed FIFO queue
 
 Pulled out of https://github.com/nsqio/nsq
+
+This fork implements adds MaxDepth parameter, and a method IsFull() to check if the queue depth reached MaxDepth.

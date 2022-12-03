@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -52,6 +53,7 @@ type Interface interface {
 	Delete() error
 	Depth() int64
 	Empty() error
+	IsFull() bool
 }
 
 // diskQueue implements a filesystem backed FIFO queue
@@ -78,6 +80,9 @@ type diskQueue struct {
 	syncTimeout         time.Duration // duration of time per fsync
 	exitFlag            int32
 	needSync            bool
+
+	maxDepth int64
+	fullFlag int32 // 0 = not full, 1 = full, using int32 for atomic access
 
 	// keeps track of the position where we have read
 	// (but not yet sent over readChan)
@@ -111,7 +116,7 @@ type diskQueue struct {
 // from the filesystem and starting the read ahead goroutine
 func New(name string, dataPath string, maxBytesPerFile int64,
 	minMsgSize int32, maxMsgSize int32,
-	syncEvery int64, syncTimeout time.Duration, logf AppLogFunc) Interface {
+	syncEvery int64, syncTimeout time.Duration, maxDepth int64, logf AppLogFunc) Interface {
 	d := diskQueue{
 		name:              name,
 		dataPath:          dataPath,
@@ -130,6 +135,8 @@ func New(name string, dataPath string, maxBytesPerFile int64,
 		syncEvery:         syncEvery,
 		syncTimeout:       syncTimeout,
 		logf:              logf,
+		maxDepth:          maxDepth,
+		fullFlag:          0,
 	}
 
 	// no need to lock here, nothing else could possibly be touching this instance
@@ -140,6 +147,10 @@ func New(name string, dataPath string, maxBytesPerFile int64,
 
 	go d.ioLoop()
 	return &d
+}
+
+func (d *diskQueue) IsFull() bool {
+	return atomic.LoadInt32(&d.fullFlag) == 1
 }
 
 // Depth returns the depth of the queue
@@ -274,6 +285,11 @@ func (d *diskQueue) skipToNextRWFile() error {
 	d.readPos = 0
 	d.nextReadFileNum = d.writeFileNum
 	d.nextReadPos = 0
+	if d.maxDepth != 0 && d.depth >= d.maxDepth {
+		// if we are full, we need to reset the full flag,
+		//but we don't want to test it direct, as that would require atomic access
+		atomic.StoreInt32(&d.fullFlag, 0)
+	}
 	d.depth = 0
 
 	return err
@@ -434,7 +450,10 @@ func (d *diskQueue) writeOne(data []byte) error {
 
 	d.writePos += totalBytes
 	d.depth += 1
-
+	if d.maxDepth != 0 && d.depth >= d.maxDepth {
+		// set full flag if needed
+		atomic.StoreInt32(&d.fullFlag, 1)
+	}
 	return err
 }
 
@@ -479,6 +498,10 @@ func (d *diskQueue) retrieveMetaData() error {
 		return err
 	}
 	d.depth = depth
+	if d.maxDepth != 0 && d.depth >= d.maxDepth {
+		// set full flag if needed
+		atomic.StoreInt32(&d.fullFlag, 1)
+	}
 	d.nextReadFileNum = d.readFileNum
 	d.nextReadPos = d.readPos
 
@@ -563,6 +586,11 @@ func (d *diskQueue) checkTailCorruption(depth int64) {
 				d.name, depth)
 		}
 		// force set depth 0
+		if d.maxDepth != 0 && d.depth >= d.maxDepth {
+			// if we are full, we need to reset the full flag,
+			//but we don't want to test it direct, as that would require atomic access
+			atomic.StoreInt32(&d.fullFlag, 0)
+		}
 		d.depth = 0
 		d.needSync = true
 	}
@@ -589,6 +617,11 @@ func (d *diskQueue) moveForward() {
 	oldReadFileNum := d.readFileNum
 	d.readFileNum = d.nextReadFileNum
 	d.readPos = d.nextReadPos
+	if d.maxDepth != 0 && d.depth >= d.maxDepth {
+		// if we are full, we need to reset the full flag,
+		//but we don't want to test it direct, as that would require atomic access
+		atomic.StoreInt32(&d.fullFlag, 0)
+	}
 	d.depth -= 1
 
 	// see if we need to clean up the old file

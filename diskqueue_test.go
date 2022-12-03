@@ -86,7 +86,7 @@ func TestDiskQueue(t *testing.T) {
 		panic(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	dq := New(dqName, tmpDir, 1024, 4, 1<<10, 2500, 2*time.Second, l)
+	dq := New(dqName, tmpDir, 1024, 4, 1<<10, 2500, 2*time.Second, -1, l)
 	defer dq.Close()
 	NotNil(t, dq)
 	Equal(t, int64(0), dq.Depth())
@@ -100,6 +100,34 @@ func TestDiskQueue(t *testing.T) {
 	Equal(t, msg, msgOut)
 }
 
+func TestDiskQueueMaxDepth(t *testing.T) {
+	l := NewTestLogger(t)
+
+	dqName := "test_disk_queue_max_depth" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+	dq := New(dqName, tmpDir, 1024, 4, 1<<10, 2500, 2*time.Second, 3, l)
+	defer dq.Close()
+	NotNil(t, dq)
+	Equal(t, false, dq.IsFull())
+	msg := []byte("test")
+	err = dq.Put(msg)
+	Equal(t, false, dq.IsFull())
+	err = dq.Put(msg)
+	Equal(t, false, dq.IsFull())
+	err = dq.Put(msg)
+	Equal(t, true, dq.IsFull())
+	err = dq.Put(msg)
+	Equal(t, true, dq.IsFull())
+	_ = <-dq.ReadChan()
+	Equal(t, true, dq.IsFull())
+	_ = <-dq.ReadChan()
+	Equal(t, false, dq.IsFull())
+}
+
 func TestDiskQueueRoll(t *testing.T) {
 	l := NewTestLogger(t)
 	dqName := "test_disk_queue_roll" + strconv.Itoa(int(time.Now().Unix()))
@@ -110,7 +138,7 @@ func TestDiskQueueRoll(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 	msg := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 0}
 	ml := int64(len(msg))
-	dq := New(dqName, tmpDir, 10*(ml+4), int32(ml), 1<<10, 2500, 2*time.Second, l)
+	dq := New(dqName, tmpDir, 10*(ml+4), int32(ml), 1<<10, 2500, 2*time.Second, -1, l)
 	defer dq.Close()
 	NotNil(t, dq)
 	Equal(t, int64(0), dq.Depth())
@@ -140,7 +168,7 @@ func TestDiskQueuePeek(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 	msg := bytes.Repeat([]byte{0}, 10)
 	ml := int64(len(msg))
-	dq := New(dqName, tmpDir, 10*(ml+4), int32(ml), 1<<10, 2500, 2*time.Second, l)
+	dq := New(dqName, tmpDir, 10*(ml+4), int32(ml), 1<<10, 2500, 2*time.Second, -1, l)
 	defer dq.Close()
 	NotNil(t, dq)
 	Equal(t, int64(0), dq.Depth())
@@ -222,7 +250,7 @@ func TestDiskQueueEmpty(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 	msg := bytes.Repeat([]byte{0}, 10)
-	dq := New(dqName, tmpDir, 100, 0, 1<<10, 2500, 2*time.Second, l)
+	dq := New(dqName, tmpDir, 100, 0, 1<<10, 2500, 2*time.Second, -1, l)
 	defer dq.Close()
 	NotNil(t, dq)
 	Equal(t, int64(0), dq.Depth())
@@ -290,7 +318,7 @@ func TestDiskQueueCorruption(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 	// require a non-zero message length for the corrupt (len 0) test below
-	dq := New(dqName, tmpDir, 1000, 10, 1<<10, 5, 2*time.Second, l)
+	dq := New(dqName, tmpDir, 1000, 10, 1<<10, 5, 2*time.Second, -1, l)
 	defer dq.Close()
 
 	msg := make([]byte, 120) // 124 bytes per message, 8 messages (992 bytes) per file
@@ -388,7 +416,7 @@ func TestDiskQueueSyncAfterRead(t *testing.T) {
 		panic(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	dq := New(dqName, tmpDir, 1<<11, 0, 1<<10, 2500, 50*time.Millisecond, l)
+	dq := New(dqName, tmpDir, 1<<11, 0, 1<<10, 2500, 50*time.Millisecond, -1, l)
 	defer dq.Close()
 
 	msg := make([]byte, 1000)
@@ -439,7 +467,7 @@ func TestDiskQueueTorture(t *testing.T) {
 		panic(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	dq := New(dqName, tmpDir, 262144, 0, 1<<10, 2500, 2*time.Second, l)
+	dq := New(dqName, tmpDir, 262144, 0, 1<<10, 2500, 2*time.Second, -1, l)
 	NotNil(t, dq)
 	Equal(t, int64(0), dq.Depth())
 
@@ -480,7 +508,7 @@ func TestDiskQueueTorture(t *testing.T) {
 
 	t.Logf("restarting diskqueue")
 
-	dq = New(dqName, tmpDir, 262144, 0, 1<<10, 2500, 2*time.Second, l)
+	dq = New(dqName, tmpDir, 262144, 0, 1<<10, 2500, 2*time.Second, -1, l)
 	defer dq.Close()
 	NotNil(t, dq)
 	Equal(t, depth, dq.Depth())
@@ -528,7 +556,7 @@ func TestDiskQueueResize(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 	msg := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	ml := int64(len(msg))
-	dq := New(dqName, tmpDir, 8*(ml+4), int32(ml), 1<<10, 2500, time.Second, l)
+	dq := New(dqName, tmpDir, 8*(ml+4), int32(ml), 1<<10, 2500, time.Second, -1, l)
 	NotNil(t, dq)
 	Equal(t, int64(0), dq.Depth())
 
@@ -542,7 +570,7 @@ func TestDiskQueueResize(t *testing.T) {
 	Equal(t, int64(9), dq.Depth())
 
 	dq.Close()
-	dq = New(dqName, tmpDir, 10*(ml+4), int32(ml), 1<<10, 2500, time.Second, l)
+	dq = New(dqName, tmpDir, 10*(ml+4), int32(ml), 1<<10, 2500, time.Second, -1, l)
 
 	for i := 0; i < 10; i++ {
 		msg[0] = byte(20 + i)
@@ -600,6 +628,7 @@ func BenchmarkDiskQueuePut262144(b *testing.B) {
 func BenchmarkDiskQueuePut1048576(b *testing.B) {
 	benchmarkDiskQueuePut(1048576, b)
 }
+
 func benchmarkDiskQueuePut(size int64, b *testing.B) {
 	b.StopTimer()
 	l := NewTestLogger(b)
@@ -609,7 +638,7 @@ func benchmarkDiskQueuePut(size int64, b *testing.B) {
 		panic(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	dq := New(dqName, tmpDir, 1024768*100, 0, 1<<20, 2500, 2*time.Second, l)
+	dq := New(dqName, tmpDir, 1024768*100, 0, 1<<20, 2500, 2*time.Second, -1, l)
 	defer dq.Close()
 	b.SetBytes(size)
 	data := make([]byte, size)
@@ -760,7 +789,7 @@ func benchmarkDiskQueueGet(size int64, b *testing.B) {
 		panic(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	dq := New(dqName, tmpDir, 1024768, 0, 1<<30, 2500, 2*time.Second, l)
+	dq := New(dqName, tmpDir, 1024768, 0, 1<<30, 2500, 2*time.Second, -1, l)
 	defer dq.Close()
 	b.SetBytes(size)
 	data := make([]byte, size)
